@@ -173,8 +173,8 @@ function convertInputToJson(inputString) {
             }
         }
 
-        // Función alternativa para casos muy complejos - contar directamente desde el string
-        function countFromString(inputString) {
+// Función alternativa para casos muy complejos - contar directamente desde el string
+function countFromString(inputString) {
             // Buscar el patrón OrderMethod=Manual
             const orderMethodMatch = inputString.match(/OrderMethod\s*=\s*Manual/);
             if (!orderMethodMatch) {
@@ -226,13 +226,13 @@ function convertInputToJson(inputString) {
                 });
             }
             
-            return {
-                found: true,
-                count: elementNames.length,
-                elementNames: elementNames,
-                message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
-            };
-        }
+    return {
+        found: true,
+        count: elementNames.length,
+        elementNames: elementNames,
+        message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
+    };
+}
 
         // Función para parsear estructuras complejas
         function parseComplexStructure(input) {
@@ -575,20 +575,25 @@ app.post('/count-elements', (req, res) => {
         let convertedJson = null;
         let result = null;
 
-        // Si recibimos texto plano, lo convertimos
+        // Si recibimos texto plano, intentar conteo directo primero
         if (typeof inputData === 'string') {
             try {
-                convertedJson = convertInputToJson(inputData);
-                // Si la conversión devuelve un resultado de conteo directo
-                if (convertedJson && convertedJson.found !== undefined) {
-                    result = convertedJson;
-                } else {
-                    // Procesar el JSON convertido
-                    result = countElementsAtSameLevel(convertedJson);
+                // Intentar conteo directo desde el string (más robusto para formatos complejos)
+                result = countFromString(inputData);
+                
+                // Si el conteo directo no encuentra OrderMethod, intentar conversión JSON
+                if (!result.found) {
+                    try {
+                        convertedJson = convertInputToJson(inputData);
+                        result = countElementsAtSameLevel(convertedJson);
+                    } catch (conversionError) {
+                        // Si ambos métodos fallan, devolver el resultado del conteo directo
+                        console.log('Conversión JSON también falló, usando resultado del conteo directo');
+                    }
                 }
             } catch (conversionError) {
                 return res.status(400).json({
-                    error: 'Error convirtiendo formato de entrada',
+                    error: 'Error procesando formato de entrada',
                     details: conversionError.message,
                     receivedFormat: 'text/plain'
                 });
