@@ -385,12 +385,22 @@ app.post('/count-elements', (req, res) => {
         req.setTimeout(30000); // 30 segundos
         res.setTimeout(30000);
 
+        // Debug: capturar información completa de la solicitud
+        console.log('=== DEBUG REQUEST ===');
+        console.log('Headers:', JSON.stringify(req.headers, null, 2));
+        console.log('Content-Type:', req.get('Content-Type'));
+        console.log('Body type:', typeof req.body);
+        console.log('Body length:', req.body ? req.body.length : 0);
+        console.log('Body preview (first 500 chars):', req.body ? req.body.toString().substring(0, 500) : 'No body');
+        console.log('Body preview (last 500 chars):', req.body ? req.body.toString().substring(Math.max(0, req.body.toString().length - 500)) : 'No body');
+
         let inputData = req.body;
         let convertedJson = null;
 
         // Si recibimos un Buffer, convertirlo a string
         if (Buffer.isBuffer(inputData)) {
             inputData = inputData.toString('utf8');
+            console.log('Converted Buffer to string, length:', inputData.length);
         }
 
         // Si recibimos texto plano, usar conteo directo (más eficiente)
@@ -401,25 +411,37 @@ app.post('/count-elements', (req, res) => {
                     inputData = JSON.parse(inputData);
                 } catch (jsonError) {
                     // Si no es JSON válido, usar conteo directo desde string
+                    console.log('Using direct count method for string input');
                     const directResult = countFromStringDirect(inputData);
-                    return res.json({
+                    console.log('Direct count result:', directResult);
+                    
+                    const response = {
                         success: true,
                         data: directResult,
                         convertedFromText: true,
                         method: 'direct_count',
                         timestamp: new Date().toISOString()
-                    });
+                    };
+                    
+                    console.log('Sending response:', JSON.stringify(response, null, 2));
+                    return res.json(response);
                 }
             } catch (error) {
                 // Si hay cualquier error, usar conteo directo como fallback
+                console.log('Error in string processing, using fallback:', error.message);
                 const directResult = countFromStringDirect(inputData);
-                return res.json({
+                console.log('Fallback count result:', directResult);
+                
+                const response = {
                     success: true,
                     data: directResult,
                     convertedFromText: true,
                     method: 'direct_count_fallback',
                     timestamp: new Date().toISOString()
-                });
+                };
+                
+                console.log('Sending fallback response:', JSON.stringify(response, null, 2));
+                return res.json(response);
             }
         }
 
@@ -543,6 +565,20 @@ app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         message: 'API funcionando correctamente',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Endpoint simple para probar que Jira puede comunicarse
+app.post('/test-jira', (req, res) => {
+    console.log('=== JIRA TEST ENDPOINT ===');
+    console.log('Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('Body:', req.body);
+    
+    res.json({
+        success: true,
+        message: 'Jira communication test successful',
+        receivedData: req.body,
         timestamp: new Date().toISOString()
     });
 });
