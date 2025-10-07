@@ -173,6 +173,58 @@ function isSystemProperty(name) {
 }
 
 /**
+ * Función de fallback para encontrar elementos con regex
+ * @param {string} content - Contenido del objeto
+ * @returns {Array} - Array de elementos encontrados
+ */
+function findElementsWithRegex(content) {
+    const elements = [];
+    
+    // Buscar jobs con diferentes patrones
+    const jobPatterns = [
+        /([A-Za-z0-9_-]+-[A-Za-z0-9_-]*)\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g,
+        /([A-Za-z0-9_-]+-[A-Za-z0-9_-]*)\s*=\s*\{[^}]*Type\s*=\s*Job:[^}]*\}/g,
+        /([A-Za-z0-9_-]+-[A-Za-z0-9_-]*)\s*=\s*\{[^}]*Type\s*=\s*Job:Script[^}]*\}/g
+    ];
+    
+    // Buscar eventos
+    const eventPatterns = [
+        /(eventsToAdd)\s*=\s*\{[^}]*\}/g,
+        /(eventsToWaitFor)\s*=\s*\{[^}]*\}/g,
+        /(eventsToDelete)\s*=\s*\{[^}]*\}/g
+    ];
+    
+    // Buscar jobs
+    jobPatterns.forEach(pattern => {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+            const name = match[1];
+            if (name && !isSystemProperty(name)) {
+                elements.push({ name, type: 'job' });
+            }
+        }
+    });
+    
+    // Buscar eventos
+    eventPatterns.forEach(pattern => {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+            const name = match[1];
+            if (name && !isSystemProperty(name)) {
+                elements.push({ name, type: 'event' });
+            }
+        }
+    });
+    
+    // Eliminar duplicados
+    const uniqueElements = elements.filter((element, index, self) => 
+        index === self.findIndex(e => e.name === element.name)
+    );
+    
+    return uniqueElements;
+}
+
+/**
  * Función de conteo directo desde string (sin regex complejos)
  * @param {string} inputString - String de entrada
  * @returns {Object} - Resultado del conteo
@@ -242,7 +294,19 @@ function countFromStringDirect(inputString) {
             console.log(`  Elemento ${index + 1}: ${element.name} (${element.type})`);
         });
         
-        const elementNames = elements.map(el => el.name);
+        // Si no encontramos elementos con el método inteligente, usar método de respaldo
+        let elementNames = [];
+        if (elements.length === 0) {
+            console.log('No elements found with intelligent method, trying fallback regex method');
+            const fallbackElements = findElementsWithRegex(objectContent);
+            console.log('Debug - Fallback elements found:', fallbackElements.length);
+            fallbackElements.forEach((element, index) => {
+                console.log(`  Fallback Element ${index + 1}: ${element.name} (${element.type})`);
+            });
+            elementNames = fallbackElements.map(el => el.name);
+        } else {
+            elementNames = elements.map(el => el.name);
+        }
         
         return {
             found: true,
@@ -403,15 +467,35 @@ app.post('/count-elements', (req, res) => {
             console.log('Converted Buffer to string, length:', inputData.length);
         }
 
-        // Si recibimos texto plano, usar conteo directo (más eficiente)
-        if (typeof inputData === 'string') {
+        // Detectar si el contenido es formato de texto plano aunque venga como JSON
+        const isTextFormat = typeof inputData === 'string' && inputData.includes('=') && inputData.includes('{') && !inputData.trim().startsWith('{');
+        
+        if (typeof inputData === 'string' || isTextFormat) {
             try {
+                // Si es formato de texto plano, usar conteo directo
+                if (isTextFormat || !inputData.trim().startsWith('{')) {
+                    console.log('Detected text format, using direct count method');
+                    const directResult = countFromStringDirect(inputData);
+                    console.log('Direct count result:', directResult);
+                    
+                    const response = {
+                        success: true,
+                        data: directResult,
+                        convertedFromText: true,
+                        method: 'direct_count',
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    console.log('Sending response:', JSON.stringify(response, null, 2));
+                    return res.json(response);
+                }
+                
                 // Intentar parsear como JSON primero
                 try {
                     inputData = JSON.parse(inputData);
                 } catch (jsonError) {
                     // Si no es JSON válido, usar conteo directo desde string
-                    console.log('Using direct count method for string input');
+                    console.log('JSON parsing failed, using direct count method for string input');
                     const directResult = countFromStringDirect(inputData);
                     console.log('Direct count result:', directResult);
                     
