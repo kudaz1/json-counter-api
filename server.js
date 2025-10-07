@@ -37,8 +37,8 @@ function convertInputToJson(inputString) {
 
         // Función principal de conversión usando regex más simple
         function convertToJson(input) {
-            // Paso 1: Reemplazar = con : y agregar comillas a las keys
-            let jsonString = input.replace(/([a-zA-Z_][a-zA-Z0-9_-]*)\s*=/g, '"$1":');
+            // Paso 1: Reemplazar = con : y agregar comillas a las keys (incluyendo guiones y números)
+            let jsonString = input.replace(/([a-zA-Z0-9_-]+)\s*=/g, '"$1":');
             
             // Paso 2: Agregar comillas a valores simples (no objetos, arrays o strings ya entre comillas)
             jsonString = jsonString.replace(/:\s*([^"{}\[\],\s][^,}]*?)(?=[,}])/g, (match, value) => {
@@ -160,12 +160,159 @@ function convertInputToJson(inputString) {
         // Función de parsing manual como último recurso
         function manualParse(str) {
             try {
-                // Intentar parsing recursivo mejorado
-                return parseObjectRecursive(str);
+                // Para casos complejos, usar parsing mejorado que maneja mejor la estructura
+                return parseComplexStructure(str);
             } catch (e) {
-                // Si falla, usar parsing básico
-                return parseObjectBasic(str);
+                try {
+                    // Intentar parsing recursivo mejorado
+                    return parseObjectRecursive(str);
+                } catch (e2) {
+                    // Si falla, usar parsing básico
+                    return parseObjectBasic(str);
+                }
             }
+        }
+
+        // Función alternativa para casos muy complejos - contar directamente desde el string
+        function countFromString(inputString) {
+            // Buscar el patrón OrderMethod=Manual
+            const orderMethodMatch = inputString.match(/OrderMethod\s*=\s*Manual/);
+            if (!orderMethodMatch) {
+                return { found: false, count: 0, elementNames: [], message: 'No se encontró ningún elemento con OrderMethod: "Manual"' };
+            }
+
+            // Encontrar la posición del OrderMethod
+            const orderMethodPos = orderMethodMatch.index;
+            
+            // Buscar el objeto que contiene OrderMethod
+            let objectStart = inputString.lastIndexOf('{', orderMethodPos);
+            let objectEnd = orderMethodPos;
+            let braceCount = 0;
+            
+            // Encontrar el final del objeto
+            for (let i = orderMethodPos; i < inputString.length; i++) {
+                if (inputString[i] === '{') braceCount++;
+                if (inputString[i] === '}') {
+                    braceCount--;
+                    if (braceCount === 0) {
+                        objectEnd = i;
+                        break;
+                    }
+                }
+            }
+            
+            // Extraer el contenido del objeto
+            const objectContent = inputString.slice(objectStart + 1, objectEnd);
+            
+            // Contar elementos que parecen jobs (contienen Type=Job) y eventos
+            const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
+            const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
+            
+            const elementNames = [];
+            if (jobMatches) {
+                jobMatches.forEach(match => {
+                    const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
+                    if (keyMatch) {
+                        elementNames.push(keyMatch[1]);
+                    }
+                });
+            }
+            if (eventMatches) {
+                eventMatches.forEach(match => {
+                    const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
+                    if (keyMatch) {
+                        elementNames.push(keyMatch[1]);
+                    }
+                });
+            }
+            
+            return {
+                found: true,
+                count: elementNames.length,
+                elementNames: elementNames,
+                message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
+            };
+        }
+
+        // Función para parsear estructuras complejas
+        function parseComplexStructure(input) {
+            const result = {};
+            
+            // Limpiar input
+            let str = input.trim();
+            if (str.startsWith('{') && str.endsWith('}')) {
+                str = str.slice(1, -1);
+            }
+            
+            // Parsear propiedades usando un enfoque más robusto
+            let pos = 0;
+            while (pos < str.length) {
+                // Saltar espacios
+                while (pos < str.length && /\s/.test(str[pos])) pos++;
+                if (pos >= str.length) break;
+                
+                // Encontrar el nombre de la propiedad
+                let keyStart = pos;
+                while (pos < str.length && str[pos] !== '=') pos++;
+                if (pos >= str.length) break;
+                
+                let key = str.slice(keyStart, pos).trim();
+                
+                // Saltar el =
+                pos++;
+                
+                // Encontrar el valor
+                let valueStart = pos;
+                let braceCount = 0;
+                let inString = false;
+                let stringChar = '';
+                
+                while (pos < str.length) {
+                    const char = str[pos];
+                    
+                    if (inString) {
+                        if (char === stringChar) {
+                            inString = false;
+                        }
+                    } else if (char === '"' || char === "'") {
+                        inString = true;
+                        stringChar = char;
+                    } else if (char === '{') {
+                        braceCount++;
+                    } else if (char === '}') {
+                        braceCount--;
+                        if (braceCount === 0) {
+                            pos++;
+                            break;
+                        }
+                    } else if (char === ',' && braceCount === 0) {
+                        break;
+                    }
+                    pos++;
+                }
+                
+                let value = str.slice(valueStart, pos).trim();
+                
+                // Procesar el valor
+                if (value.startsWith('{') && value.endsWith('}')) {
+                    result[key] = parseComplexStructure(value);
+                } else if (value.startsWith('[') && value.endsWith(']')) {
+                    result[key] = parseArray(value);
+                } else {
+                    // Limpiar comillas
+                    if (value.startsWith('"') && value.endsWith('"')) {
+                        value = value.slice(1, -1);
+                    }
+                    result[key] = value;
+                }
+                
+                // Saltar la coma si existe
+                if (pos < str.length && str[pos] === ',') {
+                    pos++;
+                }
+            }
+            
+            return result;
         }
 
         function parseObjectRecursive(input) {
@@ -347,10 +494,17 @@ function convertInputToJson(inputString) {
             return result;
         }
 
-        return convertToJson(str);
+        const result = convertToJson(str);
+        return result;
 
     } catch (error) {
-        throw new Error(`Error convirtiendo formato de entrada: ${error.message}`);
+        // Si falla la conversión, intentar contar directamente desde el string
+        try {
+            console.log('Conversión JSON falló, usando conteo directo desde string');
+            return countFromString(inputString);
+        } catch (countError) {
+            throw new Error(`Error convirtiendo formato de entrada: ${error.message}`);
+        }
     }
 }
 
@@ -375,17 +529,16 @@ function countElementsAtSameLevel(jsonData) {
             foundOrderMethod = true;
             
             // Contar elementos en el mismo nivel (dentro del objeto que tiene OrderMethod)
-            // Excluir propiedades del sistema/metadata, contar solo elementos de trabajo
+            // Excluir solo propiedades del sistema/metadata básicas, contar elementos de trabajo
             for (const [key, value] of Object.entries(obj)) {
                 if (typeof value === 'object' && value !== null) {
-                    // Excluir propiedades del sistema/metadata, contar solo elementos de trabajo
+                    // Excluir solo propiedades del sistema/metadata básicas
                     if (key !== 'Type' && key !== 'ControlmServer' && key !== 'OrderMethod' && 
                         key !== 'CreatedBy' && key !== 'Description' && key !== 'RunAs' && 
                         key !== 'Application' && key !== 'SubApplication' && key !== 'Priority' &&
                         key !== 'FileName' && key !== 'Host' && key !== 'FilePath' &&
                         key !== 'Variables' && key !== 'RerunSpecificTimes' && key !== 'When' &&
-                        key !== 'Rerun' && key !== 'eventsToAdd' && key !== 'eventsToWaitFor' &&
-                        key !== 'eventsToDelete' && !key.startsWith('IfBase:')) {
+                        key !== 'Rerun' && !key.startsWith('IfBase:')) {
                         count++;
                         elementNames.push(key);
                     }
@@ -419,10 +572,20 @@ app.post('/count-elements', (req, res) => {
     try {
         let inputData = req.body;
 
+        let convertedJson = null;
+        let result = null;
+
         // Si recibimos texto plano, lo convertimos
         if (typeof inputData === 'string') {
             try {
-                inputData = convertInputToJson(inputData);
+                convertedJson = convertInputToJson(inputData);
+                // Si la conversión devuelve un resultado de conteo directo
+                if (convertedJson && convertedJson.found !== undefined) {
+                    result = convertedJson;
+                } else {
+                    // Procesar el JSON convertido
+                    result = countElementsAtSameLevel(convertedJson);
+                }
             } catch (conversionError) {
                 return res.status(400).json({
                     error: 'Error convirtiendo formato de entrada',
@@ -430,21 +593,20 @@ app.post('/count-elements', (req, res) => {
                     receivedFormat: 'text/plain'
                 });
             }
+        } else {
+            // Si ya es un objeto JSON
+            if (!inputData || typeof inputData !== 'object') {
+                return res.status(400).json({
+                    error: 'Se requiere un objeto JSON válido o string en formato de entrada en el cuerpo de la petición',
+                    acceptedFormats: [
+                        'application/json - Objeto JSON válido',
+                        'text/plain - String en formato {key=value, key2={subkey=value2}}'
+                    ]
+                });
+            }
+            convertedJson = inputData;
+            result = countElementsAtSameLevel(inputData);
         }
-
-        // Validar que tengamos datos válidos
-        if (!inputData || (typeof inputData !== 'object' && typeof inputData !== 'string')) {
-            return res.status(400).json({
-                error: 'Se requiere un objeto JSON válido o string en formato de entrada en el cuerpo de la petición',
-                acceptedFormats: [
-                    'application/json - Objeto JSON válido',
-                    'text/plain - String en formato {key=value, key2={subkey=value2}}'
-                ]
-            });
-        }
-
-        // Procesar el JSON y contar elementos
-        const result = countElementsAtSameLevel(inputData);
 
         res.json({
             success: true,
