@@ -7,6 +7,97 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(express.text({ limit: '10mb' })); // Para recibir texto plano también
+
+/**
+ * Función para convertir texto plano a JSON válido
+ * Convierte formato: {key=value, key2={subkey=value2}} a JSON válido
+ * @param {string} inputString - String en formato de entrada
+ * @returns {Object} - Objeto JSON válido
+ */
+function convertTextToJson(inputString) {
+    try {
+        // Si ya es un objeto, devolverlo
+        if (typeof inputString === 'object') {
+            return inputString;
+        }
+
+        // Si no es string, error
+        if (typeof inputString !== 'string') {
+            throw new Error('Input debe ser string');
+        }
+
+        // Limpiar el string
+        let str = inputString.trim();
+        
+        // Si no empieza con {, agregarlo
+        if (!str.startsWith('{')) {
+            str = '{' + str + '}';
+        }
+
+        // Convertir el formato {key=value, key2={subkey=value2}} a JSON válido
+        let jsonString = str;
+        
+        // Paso 1: Reemplazar = con : y agregar comillas a las keys
+        jsonString = jsonString.replace(/([a-zA-Z0-9_-]+)\s*=/g, '"$1":');
+        
+        // Paso 2: Agregar comillas a valores simples
+        jsonString = jsonString.replace(/:\s*([^"{}\[\],\s][^,}]*?)(?=[,}])/g, (match, value) => {
+            value = value.trim();
+            // Si ya tiene comillas, no hacer nada
+            if (value.startsWith('"') && value.endsWith('"')) {
+                return match;
+            }
+            // Si es un número, booleano o null, no agregar comillas
+            if (/^(true|false|null|\d+(\.\d+)?)$/.test(value)) {
+                return match;
+            }
+            // Si es un objeto o array, no agregar comillas
+            if (value.startsWith('{') || value.startsWith('[')) {
+                return match;
+            }
+            // Agregar comillas
+            return ': "' + value + '"';
+        });
+
+        // Paso 3: Manejar objetos anidados recursivamente
+        function convertNestedObjects(input) {
+            return input.replace(/\{[^{}]*\}/g, (match) => {
+                // Si ya tiene formato JSON (contiene ": "), devolverlo tal como está
+                if (match.includes('": ')) {
+                    return match;
+                }
+                // Si no, convertirlo recursivamente
+                try {
+                    const converted = convertNestedObjects(match);
+                    return JSON.stringify(convertTextToJson(converted));
+                } catch (e) {
+                    return match;
+                }
+            });
+        }
+
+        jsonString = convertNestedObjects(jsonString);
+
+        // Paso 4: Parsear el JSON resultante
+        try {
+            return JSON.parse(jsonString);
+        } catch (parseError) {
+            // Si falla, intentar limpiar problemas comunes
+            let cleaned = jsonString
+                .replace(/""/g, '"')  // Comillas dobles
+                .replace(/:\s*([^",}]+)(?=[,}])/g, ': "$1"')  // Valores sin comillas
+                .replace(/"\s*,\s*"/g, '", "')  // Espacios en comas
+                .replace(/\{\s*"/g, '{"')  // Espacios después de {
+                .replace(/"\s*\}/g, '"}');  // Espacios antes de }
+            
+            return JSON.parse(cleaned);
+        }
+
+    } catch (error) {
+        throw new Error(`Error convirtiendo texto a JSON: ${error.message}`);
+    }
+}
 
 /**
  * Función para contar elementos al mismo nivel que el elemento con OrderMethod: "Manual"
@@ -88,24 +179,28 @@ app.get('/', (req, res) => {
         usage: {
             method: 'POST',
             url: '/count-elements',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: [
+                { 'Content-Type': 'application/json' },
+                { 'Content-Type': 'text/plain' }
+            ],
             body: {
-                description: 'Objeto JSON con estructura que contenga OrderMethod: "Manual"',
-                example: {
-                    'Test-Carlos-MallaError': {
-                        'Type': 'Folder',
-                        'OrderMethod': 'Manual',
-                        'test1': {
-                            'Type': 'Job:Command',
-                            'Command': 'echo "Hola mundo"'
-                        },
-                        'Select_Tabla': {
-                            'Type': 'Job:Database:SQLScript',
-                            'SQLScript': 'SELECT * FROM tabla'
+                description: 'Acepta tanto JSON válido como texto plano en formato {key=value}',
+                examples: {
+                    json: {
+                        'Test-Carlos-MallaError': {
+                            'Type': 'Folder',
+                            'OrderMethod': 'Manual',
+                            'test1': {
+                                'Type': 'Job:Command',
+                                'Command': 'echo "Hola mundo"'
+                            },
+                            'Select_Tabla': {
+                                'Type': 'Job:Database:SQLScript',
+                                'SQLScript': 'SELECT * FROM tabla'
+                            }
                         }
-                    }
+                    },
+                    text: '{Test-Carlos-MallaError={Type=Folder, OrderMethod=Manual, test1={Type=Job:Command, Command=echo "Hola mundo"}, Select_Tabla={Type=Job:Database:SQLScript, SQLScript=SELECT * FROM tabla}}}'
                 }
             }
         },
@@ -124,14 +219,32 @@ app.get('/', (req, res) => {
 // Endpoint principal para procesar JSON
 app.post('/count-elements', (req, res) => {
     try {
-        const inputData = req.body;
+        let inputData = req.body;
+        let convertedJson = null;
+
+        // Si recibimos texto plano, lo convertimos a JSON
+        if (typeof inputData === 'string') {
+            try {
+                convertedJson = convertTextToJson(inputData);
+                inputData = convertedJson;
+            } catch (conversionError) {
+                return res.status(400).json({
+                    error: 'Error convirtiendo formato de entrada',
+                    details: conversionError.message,
+                    receivedFormat: 'text/plain'
+                });
+            }
+        }
 
         // Validar que tengamos un objeto JSON válido
         if (!inputData || typeof inputData !== 'object') {
             return res.status(400).json({
-                error: 'Se requiere un objeto JSON válido en el cuerpo de la petición',
+                error: 'Se requiere un objeto JSON válido o string en formato de entrada en el cuerpo de la petición',
                 receivedType: typeof inputData,
-                acceptedFormat: 'application/json'
+                acceptedFormats: [
+                    'application/json - Objeto JSON válido',
+                    'text/plain - String en formato {key=value, key2={subkey=value2}}'
+                ]
             });
         }
 
@@ -141,11 +254,12 @@ app.post('/count-elements', (req, res) => {
         res.json({
             success: true,
             data: result,
+            convertedFromText: convertedJson ? true : false,
             timestamp: new Date().toISOString()
         });
 
     } catch (error) {
-        console.error('Error procesando JSON:', error);
+        console.error('Error procesando entrada:', error);
         res.status(500).json({
             success: false,
             error: 'Error interno del servidor',
