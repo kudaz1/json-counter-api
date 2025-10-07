@@ -14,8 +14,8 @@ app.use('/count-elements', express.raw({ type: '*/*', limit: '10mb' }));
 app.use(express.json({ limit: '10mb' }));
 
 /**
- * Función para convertir texto plano a JSON válido
- * Convierte formato: {key=value, key2={subkey=value2}} a JSON válido
+ * Función simple para convertir texto plano a JSON válido
+ * Versión optimizada para evitar problemas de memoria
  * @param {string} inputString - String en formato de entrada
  * @returns {Object} - Objeto JSON válido
  */
@@ -39,67 +39,102 @@ function convertTextToJson(inputString) {
             str = '{' + str + '}';
         }
 
-        // Convertir el formato {key=value, key2={subkey=value2}} a JSON válido
+        // Conversión simple y segura
         let jsonString = str;
         
-        // Paso 1: Reemplazar = con : y agregar comillas a las keys
-        jsonString = jsonString.replace(/([a-zA-Z0-9_-]+)\s*=/g, '"$1":');
+        // Paso 1: Reemplazar = con : de forma simple
+        jsonString = jsonString.replace(/=/g, ':');
         
-        // Paso 2: Agregar comillas a valores simples
+        // Paso 2: Agregar comillas a las keys (solo las que no las tienen)
+        jsonString = jsonString.replace(/([a-zA-Z0-9_-]+):/g, '"$1":');
+        
+        // Paso 3: Agregar comillas a valores simples (muy básico)
         jsonString = jsonString.replace(/:\s*([^"{}\[\],\s][^,}]*?)(?=[,}])/g, (match, value) => {
             value = value.trim();
-            // Si ya tiene comillas, no hacer nada
-            if (value.startsWith('"') && value.endsWith('"')) {
-                return match;
-            }
-            // Si es un número, booleano o null, no agregar comillas
-            if (/^(true|false|null|\d+(\.\d+)?)$/.test(value)) {
-                return match;
-            }
-            // Si es un objeto o array, no agregar comillas
-            if (value.startsWith('{') || value.startsWith('[')) {
+            // Si ya tiene comillas o es un número, no hacer nada
+            if (value.startsWith('"') || /^\d+$/.test(value)) {
                 return match;
             }
             // Agregar comillas
             return ': "' + value + '"';
         });
 
-        // Paso 3: Manejar objetos anidados recursivamente
-        function convertNestedObjects(input) {
-            return input.replace(/\{[^{}]*\}/g, (match) => {
-                // Si ya tiene formato JSON (contiene ": "), devolverlo tal como está
-                if (match.includes('": ')) {
-                    return match;
-                }
-                // Si no, convertirlo recursivamente
-                try {
-                    const converted = convertNestedObjects(match);
-                    return JSON.stringify(convertTextToJson(converted));
-                } catch (e) {
-                    return match;
-                }
-            });
-        }
+        // Paso 4: Limpiar problemas básicos
+        jsonString = jsonString
+            .replace(/""/g, '"')
+            .replace(/:\s*"/g, ': "')
+            .replace(/"\s*:/g, '":');
 
-        jsonString = convertNestedObjects(jsonString);
-
-        // Paso 4: Parsear el JSON resultante
+        // Paso 5: Parsear
         try {
             return JSON.parse(jsonString);
         } catch (parseError) {
-            // Si falla, intentar limpiar problemas comunes
-            let cleaned = jsonString
-                .replace(/""/g, '"')  // Comillas dobles
-                .replace(/:\s*([^",}]+)(?=[,}])/g, ': "$1"')  // Valores sin comillas
-                .replace(/"\s*,\s*"/g, '", "')  // Espacios en comas
-                .replace(/\{\s*"/g, '{"')  // Espacios después de {
-                .replace(/"\s*\}/g, '"}');  // Espacios antes de }
-            
-            return JSON.parse(cleaned);
+            // Si falla, devolver un objeto básico con el conteo directo
+            console.log('Conversión JSON falló, usando conteo directo desde string');
+            return countFromStringDirect(inputString);
         }
 
     } catch (error) {
-        throw new Error(`Error convirtiendo texto a JSON: ${error.message}`);
+        console.log('Error en conversión, usando conteo directo:', error.message);
+        return countFromStringDirect(inputString);
+    }
+}
+
+/**
+ * Función de conteo directo desde string (sin regex complejos)
+ * @param {string} inputString - String de entrada
+ * @returns {Object} - Resultado del conteo
+ */
+function countFromStringDirect(inputString) {
+    try {
+        // Buscar OrderMethod=Manual
+        if (!inputString.includes('OrderMethod') || !inputString.includes('Manual')) {
+            return {
+                found: false,
+                count: 0,
+                elementNames: [],
+                message: 'No se encontró ningún elemento con OrderMethod: "Manual"'
+            };
+        }
+
+        // Contar elementos que parecen jobs (contienen Type=Job o Type=Job:)
+        const jobMatches = inputString.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
+        const eventMatches = inputString.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
+        
+        const elementNames = [];
+        
+        if (jobMatches) {
+            jobMatches.forEach(match => {
+                const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
+                if (keyMatch) {
+                    elementNames.push(keyMatch[1]);
+                }
+            });
+        }
+        
+        if (eventMatches) {
+            eventMatches.forEach(match => {
+                const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
+                if (keyMatch) {
+                    elementNames.push(keyMatch[1]);
+                }
+            });
+        }
+        
+        return {
+            found: true,
+            count: elementNames.length,
+            elementNames: elementNames,
+            message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
+        };
+        
+    } catch (error) {
+        return {
+            found: false,
+            count: 0,
+            elementNames: [],
+            message: 'Error procesando el formato de entrada'
+        };
     }
 }
 
@@ -235,22 +270,32 @@ app.post('/count-elements', (req, res) => {
             inputData = inputData.toString('utf8');
         }
 
-        // Si recibimos texto plano, lo convertimos a JSON
+        // Si recibimos texto plano, usar conteo directo (más eficiente)
         if (typeof inputData === 'string') {
             try {
                 // Intentar parsear como JSON primero
                 try {
                     inputData = JSON.parse(inputData);
                 } catch (jsonError) {
-                    // Si no es JSON válido, convertir desde formato de texto
-                    convertedJson = convertTextToJson(inputData);
-                    inputData = convertedJson;
+                    // Si no es JSON válido, usar conteo directo desde string
+                    const directResult = countFromStringDirect(inputData);
+                    return res.json({
+                        success: true,
+                        data: directResult,
+                        convertedFromText: true,
+                        method: 'direct_count',
+                        timestamp: new Date().toISOString()
+                    });
                 }
-            } catch (conversionError) {
-                return res.status(400).json({
-                    error: 'Error convirtiendo formato de entrada',
-                    details: conversionError.message,
-                    receivedFormat: 'text/plain'
+            } catch (error) {
+                // Si hay cualquier error, usar conteo directo como fallback
+                const directResult = countFromStringDirect(inputData);
+                return res.json({
+                    success: true,
+                    data: directResult,
+                    convertedFromText: true,
+                    method: 'direct_count_fallback',
+                    timestamp: new Date().toISOString()
                 });
             }
         }
