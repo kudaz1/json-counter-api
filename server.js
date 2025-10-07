@@ -264,13 +264,15 @@ function countFromStringDirect(inputString) {
         }
 
         // Encontrar el final del objeto que contiene OrderMethod=Manual
-        let objectEnd = orderMethodPos;
+        // Necesitamos encontrar el objeto raíz que contiene OrderMethod=Manual
+        let objectEnd = inputString.length - 1; // Por defecto, hasta el final
         let braceCount = 0;
         
         console.log('Debug - Searching for object end starting from position:', orderMethodPos);
         console.log('Debug - Input string length:', inputString.length);
         
-        for (let i = orderMethodPos; i < inputString.length; i++) {
+        // Contar llaves desde el inicio del objeto hasta encontrar el cierre
+        for (let i = objectStart; i < inputString.length; i++) {
             if (inputString[i] === '{') braceCount++;
             if (inputString[i] === '}') {
                 braceCount--;
