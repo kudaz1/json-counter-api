@@ -6,8 +6,30 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
+
+// Middleware para manejar tanto JSON como texto plano
+app.use('/count-elements', (req, res, next) => {
+    const contentType = req.get('Content-Type');
+    
+    if (contentType && contentType.includes('application/json')) {
+        express.json({ limit: '10mb' })(req, res, next);
+    } else if (contentType && contentType.includes('text/plain')) {
+        express.text({ limit: '10mb' })(req, res, next);
+    } else {
+        // Si no se especifica Content-Type, intentar JSON primero
+        express.json({ limit: '10mb' })(req, res, (err) => {
+            if (err) {
+                // Si falla JSON, intentar como texto plano
+                express.text({ limit: '10mb' })(req, res, next);
+            } else {
+                next();
+            }
+        });
+    }
+});
+
+// Middleware JSON para otros endpoints
 app.use(express.json({ limit: '10mb' }));
-app.use(express.text({ limit: '10mb' })); // Para recibir texto plano también
 
 /**
  * Función para convertir texto plano a JSON válido
