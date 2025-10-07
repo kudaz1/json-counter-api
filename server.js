@@ -7,26 +7,8 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 
-// Middleware para manejar tanto JSON como texto plano
-app.use('/count-elements', (req, res, next) => {
-    const contentType = req.get('Content-Type');
-    
-    if (contentType && contentType.includes('application/json')) {
-        express.json({ limit: '10mb' })(req, res, next);
-    } else if (contentType && contentType.includes('text/plain')) {
-        express.text({ limit: '10mb' })(req, res, next);
-    } else {
-        // Si no se especifica Content-Type, intentar JSON primero
-        express.json({ limit: '10mb' })(req, res, (err) => {
-            if (err) {
-                // Si falla JSON, intentar como texto plano
-                express.text({ limit: '10mb' })(req, res, next);
-            } else {
-                next();
-            }
-        });
-    }
-});
+// Middleware para manejar tanto JSON como texto plano de forma más simple
+app.use('/count-elements', express.raw({ type: '*/*', limit: '10mb' }));
 
 // Middleware JSON para otros endpoints
 app.use(express.json({ limit: '10mb' }));
@@ -241,14 +223,29 @@ app.get('/', (req, res) => {
 // Endpoint principal para procesar JSON
 app.post('/count-elements', (req, res) => {
     try {
+        // Configurar timeout más largo para Jira
+        req.setTimeout(30000); // 30 segundos
+        res.setTimeout(30000);
+
         let inputData = req.body;
         let convertedJson = null;
+
+        // Si recibimos un Buffer, convertirlo a string
+        if (Buffer.isBuffer(inputData)) {
+            inputData = inputData.toString('utf8');
+        }
 
         // Si recibimos texto plano, lo convertimos a JSON
         if (typeof inputData === 'string') {
             try {
-                convertedJson = convertTextToJson(inputData);
-                inputData = convertedJson;
+                // Intentar parsear como JSON primero
+                try {
+                    inputData = JSON.parse(inputData);
+                } catch (jsonError) {
+                    // Si no es JSON válido, convertir desde formato de texto
+                    convertedJson = convertTextToJson(inputData);
+                    inputData = convertedJson;
+                }
             } catch (conversionError) {
                 return res.status(400).json({
                     error: 'Error convirtiendo formato de entrada',
@@ -397,12 +394,17 @@ app.use('*', (req, res) => {
     });
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
+// Configurar el servidor con timeouts más largos para Jira
+const server = app.listen(PORT, () => {
     console.log(`🚀 Servidor ejecutándose en http://localhost:${PORT}`);
     console.log(`📊 Endpoint principal: POST http://localhost:${PORT}/count-elements`);
     console.log(`🧪 Endpoint de prueba: GET http://localhost:${PORT}/test`);
     console.log(`❤️  Endpoint de salud: GET http://localhost:${PORT}/health`);
 });
+
+// Configurar timeouts del servidor para Jira
+server.timeout = 30000; // 30 segundos
+server.keepAliveTimeout = 30000;
+server.headersTimeout = 35000;
 
 module.exports = app;
