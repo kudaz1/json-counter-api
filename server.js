@@ -267,16 +267,27 @@ function countFromStringDirect(inputString) {
         let objectEnd = orderMethodPos;
         let braceCount = 0;
         
+        console.log('Debug - Searching for object end starting from position:', orderMethodPos);
+        console.log('Debug - Input string length:', inputString.length);
+        
         for (let i = orderMethodPos; i < inputString.length; i++) {
             if (inputString[i] === '{') braceCount++;
             if (inputString[i] === '}') {
                 braceCount--;
                 if (braceCount === 0) {
                     objectEnd = i;
+                    console.log('Debug - Found object end at position:', objectEnd);
                     break;
                 }
             }
         }
+        
+        console.log('Debug - Object boundaries:', {
+            start: objectStart,
+            end: objectEnd,
+            orderMethodPos: orderMethodPos,
+            contentLength: objectEnd - objectStart
+        });
 
         // Extraer solo el contenido del objeto que tiene OrderMethod=Manual
         const objectContent = inputString.slice(objectStart + 1, objectEnd);
@@ -305,7 +316,29 @@ function countFromStringDirect(inputString) {
             });
             elementNames = fallbackElements.map(el => el.name);
         } else {
+            console.log('Using intelligent method results, but checking if we should also try fallback');
             elementNames = elements.map(el => el.name);
+            
+            // Si encontramos pocos elementos, también probar el método de fallback
+            if (elements.length < 2) {
+                console.log('Few elements found with intelligent method, also trying fallback method');
+                const fallbackElements = findElementsWithRegex(objectContent);
+                console.log('Debug - Fallback elements found:', fallbackElements.length);
+                fallbackElements.forEach((element, index) => {
+                    console.log(`  Fallback Element ${index + 1}: ${element.name} (${element.type})`);
+                });
+                
+                // Combinar ambos métodos y eliminar duplicados
+                const allElements = [...elements];
+                fallbackElements.forEach(fallbackEl => {
+                    if (!allElements.find(el => el.name === fallbackEl.name)) {
+                        allElements.push(fallbackEl);
+                    }
+                });
+                
+                console.log('Debug - Combined elements:', allElements.length);
+                elementNames = allElements.map(el => el.name);
+            }
         }
         
         return {
