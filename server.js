@@ -173,66 +173,6 @@ function convertInputToJson(inputString) {
             }
         }
 
-// Función alternativa para casos muy complejos - contar directamente desde el string
-function countFromString(inputString) {
-            // Buscar el patrón OrderMethod=Manual
-            const orderMethodMatch = inputString.match(/OrderMethod\s*=\s*Manual/);
-            if (!orderMethodMatch) {
-                return { found: false, count: 0, elementNames: [], message: 'No se encontró ningún elemento con OrderMethod: "Manual"' };
-            }
-
-            // Encontrar la posición del OrderMethod
-            const orderMethodPos = orderMethodMatch.index;
-            
-            // Buscar el objeto que contiene OrderMethod
-            let objectStart = inputString.lastIndexOf('{', orderMethodPos);
-            let objectEnd = orderMethodPos;
-            let braceCount = 0;
-            
-            // Encontrar el final del objeto
-            for (let i = orderMethodPos; i < inputString.length; i++) {
-                if (inputString[i] === '{') braceCount++;
-                if (inputString[i] === '}') {
-                    braceCount--;
-                    if (braceCount === 0) {
-                        objectEnd = i;
-                        break;
-                    }
-                }
-            }
-            
-            // Extraer el contenido del objeto
-            const objectContent = inputString.slice(objectStart + 1, objectEnd);
-            
-            // Contar elementos que parecen jobs (contienen Type=Job) y eventos
-            const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
-            const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
-            
-            const elementNames = [];
-            if (jobMatches) {
-                jobMatches.forEach(match => {
-                    const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
-                    if (keyMatch) {
-                        elementNames.push(keyMatch[1]);
-                    }
-                });
-            }
-            if (eventMatches) {
-                eventMatches.forEach(match => {
-                    const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
-                    if (keyMatch) {
-                        elementNames.push(keyMatch[1]);
-                    }
-                });
-            }
-            
-    return {
-        found: true,
-        count: elementNames.length,
-        elementNames: elementNames,
-        message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
-    };
-}
 
         // Función para parsear estructuras complejas
         function parseComplexStructure(input) {
@@ -506,6 +446,71 @@ function countFromString(inputString) {
             throw new Error(`Error convirtiendo formato de entrada: ${error.message}`);
         }
     }
+}
+
+/**
+ * Función alternativa para casos muy complejos - contar directamente desde el string
+ * @param {string} inputString - El string de entrada en formato custom
+ * @returns {Object} - Objeto con el conteo y detalles
+ */
+function countFromString(inputString) {
+    // Buscar el patrón OrderMethod=Manual
+    const orderMethodMatch = inputString.match(/OrderMethod\s*=\s*Manual/);
+    if (!orderMethodMatch) {
+        return { found: false, count: 0, elementNames: [], message: 'No se encontró ningún elemento con OrderMethod: "Manual"' };
+    }
+
+    // Encontrar la posición del OrderMethod
+    const orderMethodPos = orderMethodMatch.index;
+    
+    // Buscar el objeto que contiene OrderMethod
+    let objectStart = inputString.lastIndexOf('{', orderMethodPos);
+    let objectEnd = orderMethodPos;
+    let braceCount = 0;
+    
+    // Encontrar el final del objeto
+    for (let i = orderMethodPos; i < inputString.length; i++) {
+        if (inputString[i] === '{') braceCount++;
+        if (inputString[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+                objectEnd = i;
+                break;
+            }
+        }
+    }
+    
+    // Extraer el contenido del objeto
+    const objectContent = inputString.slice(objectStart + 1, objectEnd);
+    
+    // Contar elementos que parecen jobs (contienen Type=Job) y eventos
+    const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
+    const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
+    
+    const elementNames = [];
+    if (jobMatches) {
+        jobMatches.forEach(match => {
+            const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
+            if (keyMatch) {
+                elementNames.push(keyMatch[1]);
+            }
+        });
+    }
+    if (eventMatches) {
+        eventMatches.forEach(match => {
+            const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
+            if (keyMatch) {
+                elementNames.push(keyMatch[1]);
+            }
+        });
+    }
+    
+    return {
+        found: true,
+        count: elementNames.length,
+        elementNames: elementNames,
+        message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
+    };
 }
 
 /**
