@@ -7,511 +7,6 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.text({ limit: '10mb' })); // Para recibir texto plano también
-
-/**
- * Función para convertir formato de entrada a JSON válido
- * Convierte formato: {key=value, key2={subkey=value2}} a JSON válido
- * @param {string} inputString - String en formato de entrada
- * @returns {Object} - Objeto JSON válido
- */
-function convertInputToJson(inputString) {
-    try {
-        // Si ya es un objeto JSON válido, lo devolvemos tal como está
-        if (typeof inputString === 'object') {
-            return inputString;
-        }
-
-        // Si es string, lo convertimos
-        if (typeof inputString !== 'string') {
-            throw new Error('Input debe ser string o objeto JSON');
-        }
-
-        // Limpiar el string
-        let str = inputString.trim();
-        
-        // Si no empieza con {, agregarlo
-        if (!str.startsWith('{')) {
-            str = '{' + str + '}';
-        }
-
-        // Función principal de conversión usando regex más simple
-        function convertToJson(input) {
-            // Paso 1: Reemplazar = con : y agregar comillas a las keys (incluyendo guiones y números)
-            let jsonString = input.replace(/([a-zA-Z0-9_-]+)\s*=/g, '"$1":');
-            
-            // Paso 2: Agregar comillas a valores simples (no objetos, arrays o strings ya entre comillas)
-            jsonString = jsonString.replace(/:\s*([^"{}\[\],\s][^,}]*?)(?=[,}])/g, (match, value) => {
-                value = value.trim();
-                // Si ya tiene comillas, no hacer nada
-                if (value.startsWith('"') && value.endsWith('"')) {
-                    return match;
-                }
-                // Si es un número, booleano o null, no agregar comillas
-                if (/^(true|false|null|\d+(\.\d+)?)$/.test(value)) {
-                    return match;
-                }
-                // Si es un objeto o array, no agregar comillas
-                if (value.startsWith('{') || value.startsWith('[')) {
-                    return match;
-                }
-                // Agregar comillas
-                return ': "' + value + '"';
-            });
-            
-            // Paso 3: Manejar arrays
-            jsonString = jsonString.replace(/\[([^\]]*)\]/g, (match, content) => {
-                if (!content.trim()) return '[]';
-                
-                // Procesar elementos del array
-                const items = [];
-                let currentItem = '';
-                let braceCount = 0;
-                let inString = false;
-                let stringChar = '';
-                
-                for (let i = 0; i < content.length; i++) {
-                    const char = content[i];
-                    
-                    if (inString) {
-                        if (char === stringChar) {
-                            inString = false;
-                        }
-                        currentItem += char;
-                    } else if (char === '"' || char === "'") {
-                        inString = true;
-                        stringChar = char;
-                        currentItem += char;
-                    } else if (char === '{') {
-                        braceCount++;
-                        currentItem += char;
-                    } else if (char === '}') {
-                        braceCount--;
-                        currentItem += char;
-                    } else if (char === ',' && braceCount === 0) {
-                        items.push(currentItem.trim());
-                        currentItem = '';
-                    } else {
-                        currentItem += char;
-                    }
-                }
-                
-                if (currentItem.trim()) {
-                    items.push(currentItem.trim());
-                }
-                
-                // Convertir cada elemento del array
-                const jsonItems = items.map(item => {
-                    item = item.trim();
-                    if (item.startsWith('{')) {
-                        return JSON.stringify(convertToJson(item));
-                    } else if (!item.startsWith('"') && !/^(true|false|null|\d+(\.\d+)?)$/.test(item)) {
-                        return '"' + item + '"';
-                    }
-                    return item;
-                });
-                
-                return '[' + jsonItems.join(', ') + ']';
-            });
-            
-            // Paso 4: Procesar objetos anidados recursivamente
-            jsonString = jsonString.replace(/\{[^{}]*\}/g, (match) => {
-                // Si ya tiene formato JSON (contiene ": "), devolverlo tal como está
-                if (match.includes('": ')) {
-                    return match;
-                }
-                // Si no, convertirlo recursivamente
-                try {
-                    const converted = convertToJson(match);
-                    return JSON.stringify(converted);
-                } catch (e) {
-                    return match;
-                }
-            });
-            
-            // Paso 5: Parsear el JSON resultante
-            try {
-                return JSON.parse(jsonString);
-            } catch (parseError) {
-                // Si falla, intentar limpiar problemas comunes
-                let cleaned = jsonString
-                    .replace(/""/g, '"')  // Comillas dobles
-                    .replace(/:\s*([^",}]+)(?=[,}])/g, ': "$1"')  // Valores sin comillas
-                    .replace(/"\s*,\s*"/g, '", "')  // Espacios en comas
-                    .replace(/\{\s*"/g, '{"')  // Espacios después de {
-                    .replace(/"\s*\}/g, '"}')  // Espacios antes de }
-                    // Manejar comillas anidadas en strings
-                    .replace(/"([^"]*)"([^"]*)"([^"]*)"/g, '"$1\\"$2\\"$3"')
-                    .replace(/"([^"]*)"([^"]*)"([^"]*)"([^"]*)"/g, '"$1\\"$2\\"$3\\"$4"');
-                
-                try {
-                    return JSON.parse(cleaned);
-                } catch (secondError) {
-                    // Último intento: crear un parser manual simple
-                    try {
-                        return manualParse(jsonString);
-                    } catch (manualError) {
-                        throw new Error(`No se pudo convertir a JSON válido. String resultante: ${jsonString}`);
-                    }
-                }
-            }
-        }
-
-        // Función de parsing manual como último recurso
-        function manualParse(str) {
-            try {
-                // Para casos complejos, usar parsing mejorado que maneja mejor la estructura
-                return parseComplexStructure(str);
-            } catch (e) {
-                try {
-                    // Intentar parsing recursivo mejorado
-                    return parseObjectRecursive(str);
-                } catch (e2) {
-                    // Si falla, usar parsing básico
-                    return parseObjectBasic(str);
-                }
-            }
-        }
-
-
-        // Función para parsear estructuras complejas
-        function parseComplexStructure(input) {
-            const result = {};
-            
-            // Limpiar input
-            let str = input.trim();
-            if (str.startsWith('{') && str.endsWith('}')) {
-                str = str.slice(1, -1);
-            }
-            
-            // Parsear propiedades usando un enfoque más robusto
-            let pos = 0;
-            while (pos < str.length) {
-                // Saltar espacios
-                while (pos < str.length && /\s/.test(str[pos])) pos++;
-                if (pos >= str.length) break;
-                
-                // Encontrar el nombre de la propiedad
-                let keyStart = pos;
-                while (pos < str.length && str[pos] !== '=') pos++;
-                if (pos >= str.length) break;
-                
-                let key = str.slice(keyStart, pos).trim();
-                
-                // Saltar el =
-                pos++;
-                
-                // Encontrar el valor
-                let valueStart = pos;
-                let braceCount = 0;
-                let inString = false;
-                let stringChar = '';
-                
-                while (pos < str.length) {
-                    const char = str[pos];
-                    
-                    if (inString) {
-                        if (char === stringChar) {
-                            inString = false;
-                        }
-                    } else if (char === '"' || char === "'") {
-                        inString = true;
-                        stringChar = char;
-                    } else if (char === '{') {
-                        braceCount++;
-                    } else if (char === '}') {
-                        braceCount--;
-                        if (braceCount === 0) {
-                            pos++;
-                            break;
-                        }
-                    } else if (char === ',' && braceCount === 0) {
-                        break;
-                    }
-                    pos++;
-                }
-                
-                let value = str.slice(valueStart, pos).trim();
-                
-                // Procesar el valor
-                if (value.startsWith('{') && value.endsWith('}')) {
-                    result[key] = parseComplexStructure(value);
-                } else if (value.startsWith('[') && value.endsWith(']')) {
-                    result[key] = parseArray(value);
-                } else {
-                    // Limpiar comillas
-                    if (value.startsWith('"') && value.endsWith('"')) {
-                        value = value.slice(1, -1);
-                    }
-                    result[key] = value;
-                }
-                
-                // Saltar la coma si existe
-                if (pos < str.length && str[pos] === ',') {
-                    pos++;
-                }
-            }
-            
-            return result;
-        }
-
-        function parseObjectRecursive(input) {
-            if (typeof input === 'object') return input;
-            
-            const result = {};
-            
-            // Limpiar input
-            let str = input.trim();
-            if (str.startsWith('{') && str.endsWith('}')) {
-                str = str.slice(1, -1);
-            }
-            
-            // Parsear propiedades
-            const parts = [];
-            let current = '';
-            let braceCount = 0;
-            let inString = false;
-            let stringChar = '';
-            
-            for (let i = 0; i < str.length; i++) {
-                const char = str[i];
-                
-                if (inString) {
-                    if (char === stringChar) {
-                        inString = false;
-                    }
-                    current += char;
-                } else if (char === '"' || char === "'") {
-                    inString = true;
-                    stringChar = char;
-                    current += char;
-                } else if (char === '{') {
-                    braceCount++;
-                    current += char;
-                } else if (char === '}') {
-                    braceCount--;
-                    current += char;
-                } else if (char === ',' && braceCount === 0) {
-                    parts.push(current.trim());
-                    current = '';
-                } else {
-                    current += char;
-                }
-            }
-            
-            if (current.trim()) {
-                parts.push(current.trim());
-            }
-            
-            // Procesar cada parte
-            parts.forEach(part => {
-                const colonIndex = part.indexOf(':');
-                if (colonIndex > 0) {
-                    const key = part.substring(0, colonIndex).replace(/^"|"$/g, '').trim();
-                    let value = part.substring(colonIndex + 1).trim();
-                    
-                    // Si el valor es un objeto anidado, parsearlo recursivamente
-                    if (value.startsWith('{') && value.endsWith('}')) {
-                        result[key] = parseObjectRecursive(value);
-                    } else if (value.startsWith('[') && value.endsWith(']')) {
-                        // Manejar arrays
-                        result[key] = parseArray(value);
-                    } else {
-                        // Limpiar comillas del valor
-                        if (value.startsWith('"') && value.endsWith('"')) {
-                            value = value.slice(1, -1);
-                        }
-                        result[key] = value;
-                    }
-                }
-            });
-            
-            return result;
-        }
-
-        function parseArray(arrayStr) {
-            const content = arrayStr.slice(1, -1).trim();
-            if (!content) return [];
-            
-            const items = [];
-            let currentItem = '';
-            let braceCount = 0;
-            let inString = false;
-            let stringChar = '';
-            
-            for (let i = 0; i < content.length; i++) {
-                const char = content[i];
-                
-                if (inString) {
-                    if (char === stringChar) {
-                        inString = false;
-                    }
-                    currentItem += char;
-                } else if (char === '"' || char === "'") {
-                    inString = true;
-                    stringChar = char;
-                    currentItem += char;
-                } else if (char === '{') {
-                    braceCount++;
-                    currentItem += char;
-                } else if (char === '}') {
-                    braceCount--;
-                    currentItem += char;
-                } else if (char === ',' && braceCount === 0) {
-                    items.push(parseObjectRecursive(currentItem.trim()));
-                    currentItem = '';
-                } else {
-                    currentItem += char;
-                }
-            }
-            
-            if (currentItem.trim()) {
-                items.push(parseObjectRecursive(currentItem.trim()));
-            }
-            
-            return items;
-        }
-
-        function parseObjectBasic(str) {
-            const result = {};
-            
-            // Remover llaves externas
-            str = str.replace(/^\{|\}$/g, '');
-            
-            // Dividir por comas pero respetando objetos anidados
-            const parts = [];
-            let current = '';
-            let braceCount = 0;
-            let inString = false;
-            let stringChar = '';
-            
-            for (let i = 0; i < str.length; i++) {
-                const char = str[i];
-                
-                if (inString) {
-                    if (char === stringChar) {
-                        inString = false;
-                    }
-                    current += char;
-                } else if (char === '"' || char === "'") {
-                    inString = true;
-                    stringChar = char;
-                    current += char;
-                } else if (char === '{') {
-                    braceCount++;
-                    current += char;
-                } else if (char === '}') {
-                    braceCount--;
-                    current += char;
-                } else if (char === ',' && braceCount === 0) {
-                    parts.push(current.trim());
-                    current = '';
-                } else {
-                    current += char;
-                }
-            }
-            
-            if (current.trim()) {
-                parts.push(current.trim());
-            }
-            
-            // Procesar cada parte
-            parts.forEach(part => {
-                const colonIndex = part.indexOf(':');
-                if (colonIndex > 0) {
-                    const key = part.substring(0, colonIndex).replace(/^"|"$/g, '').trim();
-                    let value = part.substring(colonIndex + 1).trim();
-                    
-                    // Limpiar comillas del valor
-                    if (value.startsWith('"') && value.endsWith('"')) {
-                        value = value.slice(1, -1);
-                    }
-                    
-                    result[key] = value;
-                }
-            });
-            
-            return result;
-        }
-
-        const result = convertToJson(str);
-        return result;
-
-    } catch (error) {
-        // Si falla la conversión, intentar contar directamente desde el string
-        try {
-            console.log('Conversión JSON falló, usando conteo directo desde string');
-            return countFromString(inputString);
-        } catch (countError) {
-            throw new Error(`Error convirtiendo formato de entrada: ${error.message}`);
-        }
-    }
-}
-
-/**
- * Función alternativa para casos muy complejos - contar directamente desde el string
- * @param {string} inputString - El string de entrada en formato custom
- * @returns {Object} - Objeto con el conteo y detalles
- */
-function countFromString(inputString) {
-    // Buscar el patrón OrderMethod=Manual
-    const orderMethodMatch = inputString.match(/OrderMethod\s*=\s*Manual/);
-    if (!orderMethodMatch) {
-        return { found: false, count: 0, elementNames: [], message: 'No se encontró ningún elemento con OrderMethod: "Manual"' };
-    }
-
-    // Encontrar la posición del OrderMethod
-    const orderMethodPos = orderMethodMatch.index;
-    
-    // Buscar el objeto que contiene OrderMethod
-    let objectStart = inputString.lastIndexOf('{', orderMethodPos);
-    let objectEnd = orderMethodPos;
-    let braceCount = 0;
-    
-    // Encontrar el final del objeto
-    for (let i = orderMethodPos; i < inputString.length; i++) {
-        if (inputString[i] === '{') braceCount++;
-        if (inputString[i] === '}') {
-            braceCount--;
-            if (braceCount === 0) {
-                objectEnd = i;
-                break;
-            }
-        }
-    }
-    
-    // Extraer el contenido del objeto
-    const objectContent = inputString.slice(objectStart + 1, objectEnd);
-    
-    // Contar elementos que parecen jobs (contienen Type=Job) y eventos
-    const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
-    const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
-    
-    const elementNames = [];
-    if (jobMatches) {
-        jobMatches.forEach(match => {
-            const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
-            if (keyMatch) {
-                elementNames.push(keyMatch[1]);
-            }
-        });
-    }
-    if (eventMatches) {
-        eventMatches.forEach(match => {
-            const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
-            if (keyMatch) {
-                elementNames.push(keyMatch[1]);
-            }
-        });
-    }
-    
-    return {
-        found: true,
-        count: elementNames.length,
-        elementNames: elementNames,
-        message: `Se encontraron ${elementNames.length} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
-    };
-}
 
 /**
  * Función para contar elementos al mismo nivel que el elemento con OrderMethod: "Manual"
@@ -560,68 +55,92 @@ function countElementsAtSameLevel(jsonData) {
         }
     }
 
+    // Iniciar búsqueda recursiva
     findOrderMethodElement(jsonData);
 
-    return {
-        found: foundOrderMethod,
-        count: count,
-        elementNames: elementNames,
-        message: foundOrderMethod 
-            ? `Se encontraron ${count} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
-            : 'No se encontró ningún elemento con OrderMethod: "Manual"'
-    };
+    // Preparar resultado
+    if (foundOrderMethod) {
+        return {
+            found: true,
+            count: count,
+            elementNames: elementNames,
+            message: `Se encontraron ${count} elementos al mismo nivel que el elemento con OrderMethod: "Manual"`
+        };
+    } else {
+        return {
+            found: false,
+            count: 0,
+            elementNames: [],
+            message: 'No se encontró ningún elemento con OrderMethod: "Manual"'
+        };
+    }
 }
+
+// Endpoint para mostrar información de la API
+app.get('/', (req, res) => {
+    res.json({
+        message: 'API para contar elementos al mismo nivel que OrderMethod: Manual',
+        version: '1.0.0',
+        endpoints: {
+            'POST /count-elements': 'Contar elementos al mismo nivel que el elemento con OrderMethod: "Manual"',
+            'GET /health': 'Verificar estado de la API'
+        },
+        usage: {
+            method: 'POST',
+            url: '/count-elements',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: {
+                description: 'Objeto JSON con estructura que contenga OrderMethod: "Manual"',
+                example: {
+                    'Test-Carlos-MallaError': {
+                        'Type': 'Folder',
+                        'OrderMethod': 'Manual',
+                        'test1': {
+                            'Type': 'Job:Command',
+                            'Command': 'echo "Hola mundo"'
+                        },
+                        'Select_Tabla': {
+                            'Type': 'Job:Database:SQLScript',
+                            'SQLScript': 'SELECT * FROM tabla'
+                        }
+                    }
+                }
+            }
+        },
+        response: {
+            success: true,
+            data: {
+                found: true,
+                count: 2,
+                elementNames: ['test1', 'Select_Tabla'],
+                message: 'Se encontraron 2 elementos al mismo nivel que el elemento con OrderMethod: "Manual"'
+            }
+        }
+    });
+});
 
 // Endpoint principal para procesar JSON
 app.post('/count-elements', (req, res) => {
     try {
-        let inputData = req.body;
+        const inputData = req.body;
 
-        let convertedJson = null;
-        let result = null;
-
-        // Si recibimos texto plano, intentar conteo directo primero
-        if (typeof inputData === 'string') {
-            try {
-                // Intentar conteo directo desde el string (más robusto para formatos complejos)
-                result = countFromString(inputData);
-                
-                // Si el conteo directo no encuentra OrderMethod, intentar conversión JSON
-                if (!result.found) {
-                    try {
-                        convertedJson = convertInputToJson(inputData);
-                        result = countElementsAtSameLevel(convertedJson);
-                    } catch (conversionError) {
-                        // Si ambos métodos fallan, devolver el resultado del conteo directo
-                        console.log('Conversión JSON también falló, usando resultado del conteo directo');
-                    }
-                }
-            } catch (conversionError) {
-                return res.status(400).json({
-                    error: 'Error procesando formato de entrada',
-                    details: conversionError.message,
-                    receivedFormat: 'text/plain'
-                });
-            }
-        } else {
-            // Si ya es un objeto JSON
-            if (!inputData || typeof inputData !== 'object') {
-                return res.status(400).json({
-                    error: 'Se requiere un objeto JSON válido o string en formato de entrada en el cuerpo de la petición',
-                    acceptedFormats: [
-                        'application/json - Objeto JSON válido',
-                        'text/plain - String en formato {key=value, key2={subkey=value2}}'
-                    ]
-                });
-            }
-            convertedJson = inputData;
-            result = countElementsAtSameLevel(inputData);
+        // Validar que tengamos un objeto JSON válido
+        if (!inputData || typeof inputData !== 'object') {
+            return res.status(400).json({
+                error: 'Se requiere un objeto JSON válido en el cuerpo de la petición',
+                receivedType: typeof inputData,
+                acceptedFormat: 'application/json'
+            });
         }
+
+        // Procesar el JSON y contar elementos
+        const result = countElementsAtSameLevel(inputData);
 
         res.json({
             success: true,
             data: result,
-            convertedJson: inputData, // Mostrar el JSON convertido
             timestamp: new Date().toISOString()
         });
 
@@ -629,85 +148,93 @@ app.post('/count-elements', (req, res) => {
         console.error('Error procesando JSON:', error);
         res.status(500).json({
             success: false,
-            error: 'Error interno del servidor al procesar el JSON',
-            details: error.message
+            error: 'Error interno del servidor',
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
 
-// Endpoint de prueba con el JSON de ejemplo
+// Endpoint de prueba con ejemplo
 app.get('/test', (req, res) => {
     const exampleJson = {
-        "36_REMANENTE_HISTORICO": {
-            "Type": "SimpleFolder",
-            "ControlmServer": "COOPEUCH_DESA",
-            "OrderMethod": "Manual",
-            "36_REMANENTE_HISTORICO-001-DIA-CRM": {
-                "Type": "Job:Script",
-                "SubApplication": "36_REMANENTE_HISTORICO",
-                "Priority": "Very Low",
-                "FileName": "buscarRemanenteHistorico.bat",
-                "Host": "crm",
-                "FilePath": "c:\\controlm\\CRM_2016\\exec\\36_Remanente_Historico",
-                "CreatedBy": "emuser",
-                "Description": "36_REMANENTE_HISTORICO",
-                "RunAs": "controlm",
-                "Application": "36_REMANENTE_HISTORICO"
+        'Test-Carlos-MallaError': {
+            'Type': 'Folder',
+            'ControlmServer': 'COOPEUCH_DESA',
+            'OrderMethod': 'Manual',
+            'SubApplication': 'Test-Carlos-MallaError',
+            'Application': 'Test-Carlos-MallaError',
+            'test1': {
+                'Type': 'Job:Command',
+                'SubApplication': 'Test-Carlos-MallaError',
+                'Host': 'controlms1de01',
+                'RunAs': 'controlm',
+                'Application': 'Test-Carlos-MallaError',
+                'Command': 'echo "Hola mundo"',
+                'eventsToAdd': {
+                    'Type': 'AddEvents',
+                    'Events': [
+                        { 'Event': 'test1-TO-Select_Tabla' }
+                    ]
+                }
             },
-            "36_REMANENTE_HISTORICO-002-DIA-CRM": {
-                "Type": "Job:Script",
-                "SubApplication": "36_REMANENTE_HISTORICO",
-                "Priority": "Very Low",
-                "FileName": "Historicoremanente.bat",
-                "Host": "crm",
-                "FilePath": "c:\\controlm\\CRM_2016\\exec\\36_Remanente_Historico",
-                "CreatedBy": "emuser",
-                "Description": "36_REMANENTE_HISTORICO",
-                "RunAs": "controlm",
-                "Application": "36_REMANENTE_HISTORICO"
+            'Select_Tabla': {
+                'Type': 'Job:Database:SQLScript',
+                'SQLScript': 'SELECT * FROM tabla',
+                'ConnectionProfile': 'nombre_del_perfil_conexion',
+                'SubApplication': 'Test-Carlos-MallaError',
+                'RunAs': 'nombre_del_perfil_conexion',
+                'Application': 'Test-Carlos-MallaError',
+                'eventsToWaitFor': {
+                    'Type': 'WaitForEvents',
+                    'Events': [
+                        { 'Event': 'test1-TO-Select_Tabla' }
+                    ]
+                },
+                'eventsToAdd': {
+                    'Type': 'AddEvents',
+                    'Events': [
+                        { 'Event': 'Select_Tabla-TO-test2' }
+                    ]
+                },
+                'eventsToDelete': {
+                    'Type': 'DeleteEvents',
+                    'Events': [
+                        { 'Event': 'test1-TO-Select_Tabla' }
+                    ]
+                }
+            },
+            'test2': {
+                'Type': 'Job:Command',
+                'SubApplication': 'Test-Carlos-MallaError',
+                'Host': 'controlms1de01',
+                'RunAs': 'controlm',
+                'Application': 'Test-Carlos-MallaError',
+                'Command': 'echo "Hola mundo"',
+                'eventsToWaitFor': {
+                    'Type': 'WaitForEvents',
+                    'Events': [
+                        { 'Event': 'Select_Tabla-TO-test2' }
+                    ]
+                },
+                'eventsToDelete': {
+                    'Type': 'DeleteEvents',
+                    'Events': [
+                        { 'Event': 'Select_Tabla-TO-test2' }
+                    ]
+                }
             }
         }
     };
 
     const result = countElementsAtSameLevel(exampleJson);
-    
+
     res.json({
-        success: true,
-        data: result,
+        message: 'Prueba de la API con ejemplo',
         exampleJson: exampleJson,
+        result: result,
         timestamp: new Date().toISOString()
     });
-});
-
-// Endpoint para probar la conversión de formato
-app.post('/convert-format', (req, res) => {
-    try {
-        const inputData = req.body;
-
-        if (!inputData || typeof inputData !== 'string') {
-            return res.status(400).json({
-                error: 'Se requiere un string en formato de entrada',
-                example: '{Test-Carlos-MallaError={Type=Folder, OrderMethod=Manual, test1={Type=Job:Command, Command=echo "Hola mundo"}}}'
-            });
-        }
-
-        const convertedJson = convertInputToJson(inputData);
-
-        res.json({
-            success: true,
-            originalInput: inputData,
-            convertedJson: convertedJson,
-            timestamp: new Date().toISOString()
-        });
-
-    } catch (error) {
-        console.error('Error convirtiendo formato:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Error convirtiendo formato de entrada',
-            details: error.message
-        });
-    }
 });
 
 // Endpoint de salud
@@ -719,16 +246,18 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Manejo de rutas no encontradas
+// Manejar rutas no encontradas
 app.use('*', (req, res) => {
     res.status(404).json({
         error: 'Endpoint no encontrado',
+        message: 'La ruta solicitada no existe',
         availableEndpoints: [
-            'POST /count-elements - Procesar JSON y contar elementos (acepta JSON o formato de entrada)',
-            'POST /convert-format - Convertir formato de entrada a JSON válido',
-            'GET /test - Probar con JSON de ejemplo',
-            'GET /health - Verificar estado de la API'
-        ]
+            'GET / - Información de la API',
+            'POST /count-elements - Contar elementos',
+            'GET /test - Prueba con ejemplo',
+            'GET /health - Estado de la API'
+        ],
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -736,10 +265,8 @@ app.use('*', (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Servidor ejecutándose en http://localhost:${PORT}`);
     console.log(`📊 Endpoint principal: POST http://localhost:${PORT}/count-elements`);
-    console.log(`🔄 Endpoint de conversión: POST http://localhost:${PORT}/convert-format`);
     console.log(`🧪 Endpoint de prueba: GET http://localhost:${PORT}/test`);
     console.log(`❤️  Endpoint de salud: GET http://localhost:${PORT}/health`);
 });
 
 module.exports = app;
-
