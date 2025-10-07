@@ -97,9 +97,49 @@ function countFromStringDirect(inputString) {
             };
         }
 
-        // Contar elementos que parecen jobs (contienen Type=Job o Type=Job:)
-        const jobMatches = inputString.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
-        const eventMatches = inputString.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
+        // Encontrar la posición de OrderMethod=Manual
+        const orderMethodPos = inputString.indexOf('OrderMethod=Manual');
+        if (orderMethodPos === -1) {
+            return {
+                found: false,
+                count: 0,
+                elementNames: [],
+                message: 'No se encontró OrderMethod=Manual en el string'
+            };
+        }
+
+        // Buscar el objeto que contiene OrderMethod=Manual
+        let objectStart = inputString.lastIndexOf('{', orderMethodPos);
+        if (objectStart === -1) {
+            return {
+                found: false,
+                count: 0,
+                elementNames: [],
+                message: 'No se encontró el inicio del objeto con OrderMethod=Manual'
+            };
+        }
+
+        // Encontrar el final del objeto que contiene OrderMethod=Manual
+        let objectEnd = orderMethodPos;
+        let braceCount = 0;
+        
+        for (let i = orderMethodPos; i < inputString.length; i++) {
+            if (inputString[i] === '{') braceCount++;
+            if (inputString[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                    objectEnd = i;
+                    break;
+                }
+            }
+        }
+
+        // Extraer solo el contenido del objeto que tiene OrderMethod=Manual
+        const objectContent = inputString.slice(objectStart + 1, objectEnd);
+        
+        // Contar elementos que parecen jobs SOLO dentro de este objeto
+        const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
+        const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
         
         const elementNames = [];
         
