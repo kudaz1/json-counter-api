@@ -138,8 +138,26 @@ function countFromStringDirect(inputString) {
         const objectContent = inputString.slice(objectStart + 1, objectEnd);
         
         // Contar elementos que parecen jobs SOLO dentro de este objeto
+        // Usar regex más flexible para encontrar todos los jobs
         const jobMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
         const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
+        
+        // Debug: mostrar qué está encontrando
+        console.log('Debug - Jobs encontrados:', jobMatches ? jobMatches.length : 0);
+        if (jobMatches) {
+            jobMatches.forEach((match, index) => {
+                const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
+                console.log(`  Job ${index + 1}: ${keyMatch ? keyMatch[1] : 'Sin nombre'}`);
+            });
+        }
+        
+        console.log('Debug - Eventos encontrados:', eventMatches ? eventMatches.length : 0);
+        if (eventMatches) {
+            eventMatches.forEach((match, index) => {
+                const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
+                console.log(`  Evento ${index + 1}: ${keyMatch ? keyMatch[1] : 'Sin nombre'}`);
+            });
+        }
         
         const elementNames = [];
         
