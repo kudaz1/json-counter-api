@@ -81,6 +81,98 @@ function convertTextToJson(inputString) {
 }
 
 /**
+ * Función para parsear elementos al mismo nivel (hermanos) en un string
+ * @param {string} content - Contenido del objeto
+ * @returns {Array} - Array de elementos hermanos
+ */
+function parseElementsAtSameLevel(content) {
+    const elements = [];
+    let currentElement = '';
+    let braceCount = 0;
+    let inString = false;
+    let stringChar = '';
+    
+    for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+        
+        if (inString) {
+            if (char === stringChar) {
+                inString = false;
+            }
+            currentElement += char;
+        } else if (char === '"' || char === "'") {
+            inString = true;
+            stringChar = char;
+            currentElement += char;
+        } else if (char === '{') {
+            braceCount++;
+            currentElement += char;
+        } else if (char === '}') {
+            braceCount--;
+            currentElement += char;
+        } else if (char === ',' && braceCount === 0) {
+            // Fin de un elemento hermano
+            const element = parseElement(currentElement.trim());
+            if (element && !isSystemProperty(element.name)) {
+                elements.push(element);
+            }
+            currentElement = '';
+        } else {
+            currentElement += char;
+        }
+    }
+    
+    // Procesar el último elemento
+    if (currentElement.trim()) {
+        const element = parseElement(currentElement.trim());
+        if (element && !isSystemProperty(element.name)) {
+            elements.push(element);
+        }
+    }
+    
+    return elements;
+}
+
+/**
+ * Función para parsear un elemento individual
+ * @param {string} elementStr - String del elemento
+ * @returns {Object|null} - Objeto con nombre y tipo del elemento
+ */
+function parseElement(elementStr) {
+    const equalIndex = elementStr.indexOf('=');
+    if (equalIndex === -1) return null;
+    
+    const name = elementStr.substring(0, equalIndex).trim();
+    const value = elementStr.substring(equalIndex + 1).trim();
+    
+    // Determinar el tipo basado en el contenido
+    let type = 'unknown';
+    if (value.includes('Type=Job') || value.includes('Type=Job:')) {
+        type = 'job';
+    } else if (value.includes('eventsToAdd') || value.includes('eventsToWaitFor') || value.includes('eventsToDelete')) {
+        type = 'event';
+    } else if (value.includes('Type=')) {
+        type = 'object';
+    }
+    
+    return { name, type, value };
+}
+
+/**
+ * Función para determinar si una propiedad es del sistema (no debe contarse)
+ * @param {string} name - Nombre de la propiedad
+ * @returns {boolean} - True si es propiedad del sistema
+ */
+function isSystemProperty(name) {
+    const systemProps = [
+        'Type', 'ControlmServer', 'OrderMethod', 'CreatedBy', 'Description', 
+        'RunAs', 'Application', 'SubApplication', 'Priority', 'FileName', 
+        'Host', 'FilePath', 'Variables', 'RerunSpecificTimes', 'When', 'Rerun'
+    ];
+    return systemProps.includes(name) || name.startsWith('IfBase:');
+}
+
+/**
  * Función de conteo directo desde string (sin regex complejos)
  * @param {string} inputString - String de entrada
  * @returns {Object} - Resultado del conteo
@@ -141,66 +233,16 @@ function countFromStringDirect(inputString) {
         console.log('Debug - Contenido del objeto (primeros 500 chars):', objectContent.substring(0, 500));
         console.log('Debug - Contenido del objeto (últimos 500 chars):', objectContent.substring(Math.max(0, objectContent.length - 500)));
         
-        // Método 1: Buscar jobs con regex más flexible
-        const jobMatches1 = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job[^}]*\}/g);
-        const jobMatches2 = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{[^}]*Type\s*=\s*Job:[^}]*\}/g);
+        // Método inteligente: buscar elementos hermanos (al mismo nivel que OrderMethod=Manual)
+        // Dividir el contenido por comas, pero respetando objetos anidados
+        const elements = parseElementsAtSameLevel(objectContent);
         
-        // Método 2: Buscar por patrones de nombres de jobs (más robusto)
-        const jobNameMatches = objectContent.match(/[A-Za-z0-9_-]+-[A-Za-z0-9_-]*\s*=\s*\{/g);
+        console.log('Debug - Elementos hermanos encontrados:', elements.length);
+        elements.forEach((element, index) => {
+            console.log(`  Elemento ${index + 1}: ${element.name} (${element.type})`);
+        });
         
-        // Método 3: Buscar eventos
-        const eventMatches = objectContent.match(/(eventsToAdd|eventsToWaitFor|eventsToDelete)\s*=\s*\{[^}]*\}/g);
-        
-        // Debug detallado
-        console.log('Debug - Método 1 (Type=Job):', jobMatches1 ? jobMatches1.length : 0);
-        console.log('Debug - Método 2 (Type=Job:):', jobMatches2 ? jobMatches2.length : 0);
-        console.log('Debug - Método 3 (Nombres de jobs):', jobNameMatches ? jobNameMatches.length : 0);
-        console.log('Debug - Eventos encontrados:', eventMatches ? eventMatches.length : 0);
-        
-        // Combinar todos los jobs encontrados
-        const allJobMatches = [];
-        if (jobMatches1) allJobMatches.push(...jobMatches1);
-        if (jobMatches2) allJobMatches.push(...jobMatches2);
-        
-        // Si no encontramos jobs con los métodos anteriores, usar el método de nombres
-        let finalJobMatches = allJobMatches.length > 0 ? allJobMatches : jobNameMatches;
-        
-        // Debug final
-        console.log('Debug - Jobs finales encontrados:', finalJobMatches ? finalJobMatches.length : 0);
-        if (finalJobMatches) {
-            finalJobMatches.forEach((match, index) => {
-                const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
-                console.log(`  Job ${index + 1}: ${keyMatch ? keyMatch[1] : 'Sin nombre'} (${match.substring(0, 100)}...)`);
-            });
-        }
-        
-        if (eventMatches) {
-            eventMatches.forEach((match, index) => {
-                const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
-                console.log(`  Evento ${index + 1}: ${keyMatch ? keyMatch[1] : 'Sin nombre'}`);
-            });
-        }
-        
-        const elementNames = [];
-        
-        // Usar los jobs finales encontrados
-        if (finalJobMatches) {
-            finalJobMatches.forEach(match => {
-                const keyMatch = match.match(/^([A-Za-z0-9_-]+)/);
-                if (keyMatch) {
-                    elementNames.push(keyMatch[1]);
-                }
-            });
-        }
-        
-        if (eventMatches) {
-            eventMatches.forEach(match => {
-                const keyMatch = match.match(/^(eventsToAdd|eventsToWaitFor|eventsToDelete)/);
-                if (keyMatch) {
-                    elementNames.push(keyMatch[1]);
-                }
-            });
-        }
+        const elementNames = elements.map(el => el.name);
         
         return {
             found: true,
